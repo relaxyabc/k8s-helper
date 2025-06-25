@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/mcp"
 )
 
@@ -28,14 +29,13 @@ func main() {
 	flag.StringVar(&aesKeyFlag, "aeskey", "k8s-mcp-client", "AES加密key")
 	flag.Parse()
 
-	mcp.AESKey = aesKeyFlag
-
 	if transport == "" {
 		transport = "stdio"
 	}
 
 	mcp.Transport = transport
-	mcp.InitDBByArgs(dbhost, dbport, dbname, dbuser, dbpass, proxy)
+	dao.InitDBByArgs(dbhost, dbport, dbname, dbuser, dbpass)
+	mcp.Init(proxy, aesKeyFlag)
 
 	s := mcp.NewMCPServer()
 

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/relaxyabc/k8s-helper/dao"
 	"golang.org/x/net/proxy"
-	"gorm.io/gorm"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -131,9 +131,8 @@ func RolloutRestartDaemonSet(clientset *kubernetes.Clientset, namespace, name st
 }
 
 // RolloutRestartDeploymentTool 滚动重启 Deployment
-func RolloutRestartDeploymentTool(db *gorm.DB, proxy string, clusterName, namespace, name string) error {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func RolloutRestartDeploymentTool(proxy string, clusterName, namespace, name string) error {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return err
 	}
@@ -145,9 +144,8 @@ func RolloutRestartDeploymentTool(db *gorm.DB, proxy string, clusterName, namesp
 }
 
 // RolloutRestartDaemonSetTool 滚动重启 DaemonSet
-func RolloutRestartDaemonSetTool(db *gorm.DB, proxy string, clusterName, namespace, name string) error {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func RolloutRestartDaemonSetTool(proxy string, clusterName, namespace, name string) error {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return err
 	}
@@ -159,9 +157,8 @@ func RolloutRestartDaemonSetTool(db *gorm.DB, proxy string, clusterName, namespa
 }
 
 // GetNamespacesTool 查询指定集群的 namespace 列表
-func GetNamespacesTool(db *gorm.DB, proxy, clusterName string) ([]string, error) {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func GetNamespacesTool(proxy, clusterName string) ([]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -173,9 +170,8 @@ func GetNamespacesTool(db *gorm.DB, proxy, clusterName string) ([]string, error)
 }
 
 // GetPodsTool 获取指定集群和命名空间下的 Pod 名称列表
-func GetPodsTool(db *gorm.DB, proxy, clusterName, namespace string) ([]string, error) {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func GetPodsTool(proxy, clusterName, namespace string) ([]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -187,9 +183,8 @@ func GetPodsTool(db *gorm.DB, proxy, clusterName, namespace string) ([]string, e
 }
 
 // GetDeploymentsTool 获取指定集群和命名空间下的 Deployment 名称列表
-func GetDeploymentsTool(db *gorm.DB, proxy, clusterName, namespace string) ([]string, error) {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func GetDeploymentsTool(proxy, clusterName, namespace string) ([]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +196,8 @@ func GetDeploymentsTool(db *gorm.DB, proxy, clusterName, namespace string) ([]st
 }
 
 // GetDaemonSetsTool 获取指定集群和命名空间下的 DaemonSet 名称列表
-func GetDaemonSetsTool(db *gorm.DB, proxy, clusterName, namespace string) ([]string, error) {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func GetDaemonSetsTool(proxy, clusterName, namespace string) ([]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -240,9 +234,8 @@ func HTTPRequestTool(method, url, body string) (string, error) {
 }
 
 // GetK8sVersionTool 获取指定集群的 k8s 版本
-func GetK8sVersionTool(db *gorm.DB, proxy, clusterName string) (string, error) {
-	var kubeconfig string
-	err := db.Table("clusters").Select("kube_config").Where("cluster_name = ?", clusterName).Scan(&kubeconfig).Error
+func GetK8sVersionTool(proxy, clusterName string) (string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
 	if err != nil {
 		return "", err
 	}
@@ -254,5 +247,5 @@ func GetK8sVersionTool(db *gorm.DB, proxy, clusterName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return versionInfo.GitVersion, nil
+	return versionInfo.String(), nil
 }

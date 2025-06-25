@@ -8,9 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-
 	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/tools"
 
@@ -20,24 +17,13 @@ import (
 )
 
 var (
-	dbConn    *gorm.DB
 	proxy     string
 	Transport string // 当前运行协议类型
 )
 
-func InitDBByArgs(host, port, dbname, user, password, proxyStr string) {
+func Init(proxyStr, aesKey string) {
 	proxy = proxyStr
-	dbInstance, err := initDB(host, port, dbname, user, password)
-	if err != nil {
-		log.Fatalf("数据库连接失败: %v", err)
-	}
-	dbConn = dbInstance
-	fmt.Println("数据库连接成功")
-}
-
-func initDB(host, port, dbname, user, password string) (*gorm.DB, error) {
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable", host, user, password, dbname, port)
-	return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	AESKey = aesKey
 }
 
 type MCPServer struct {
@@ -117,7 +103,7 @@ func NewMCPServer() *MCPServer {
 		if method != "GET" || url != "/clusters" {
 			return mcp.NewToolResultError("仅支持 GET /clusters"), nil
 		}
-		result, err := dao.GetClusterInfos(dbConn)
+		result, err := dao.GetClusterInfos()
 		if err != nil {
 			return mcp.NewToolResultError("查询数据库失败: " + err.Error()), nil
 		}
@@ -147,7 +133,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" {
 			return mcp.NewToolResultError("参数 cluster_name 必填"), nil
 		}
-		nsList, err := tools.GetNamespacesTool(dbConn, proxy, clusterName)
+		nsList, err := tools.GetNamespacesTool(proxy, clusterName)
 		if err != nil {
 			return mcp.NewToolResultError("获取 namespace 失败: " + err.Error()), nil
 		}
@@ -178,7 +164,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" || namespace == "" {
 			return mcp.NewToolResultError("参数 cluster_name 和 namespace 必填"), nil
 		}
-		pods, err := tools.GetPodsTool(dbConn, proxy, clusterName, namespace)
+		pods, err := tools.GetPodsTool(proxy, clusterName, namespace)
 		if err != nil {
 			return mcp.NewToolResultError("获取 pods 失败: " + err.Error()), nil
 		}
@@ -209,7 +195,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" || namespace == "" {
 			return mcp.NewToolResultError("参数 cluster_name 和 namespace 必填"), nil
 		}
-		deployments, err := tools.GetDeploymentsTool(dbConn, proxy, clusterName, namespace)
+		deployments, err := tools.GetDeploymentsTool(proxy, clusterName, namespace)
 		if err != nil {
 			return mcp.NewToolResultError("获取 deployments 失败: " + err.Error()), nil
 		}
@@ -240,7 +226,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" || namespace == "" {
 			return mcp.NewToolResultError("参数 cluster_name 和 namespace 必填"), nil
 		}
-		daemonsets, err := tools.GetDaemonSetsTool(dbConn, proxy, clusterName, namespace)
+		daemonsets, err := tools.GetDaemonSetsTool(proxy, clusterName, namespace)
 		if err != nil {
 			return mcp.NewToolResultError("获取 daemonsets 失败: " + err.Error()), nil
 		}
@@ -272,7 +258,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" || namespace == "" || name == "" {
 			return mcp.NewToolResultError("参数 cluster_name、namespace、name 必填"), nil
 		}
-		err := tools.RolloutRestartDeploymentTool(dbConn, proxy, clusterName, namespace, name)
+		err := tools.RolloutRestartDeploymentTool(proxy, clusterName, namespace, name)
 		if err != nil {
 			return mcp.NewToolResultError("滚动重启 Deployment 失败: " + err.Error()), nil
 		}
@@ -300,7 +286,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" || namespace == "" || name == "" {
 			return mcp.NewToolResultError("参数 cluster_name、namespace、name 必填"), nil
 		}
-		err := tools.RolloutRestartDaemonSetTool(dbConn, proxy, clusterName, namespace, name)
+		err := tools.RolloutRestartDaemonSetTool(proxy, clusterName, namespace, name)
 		if err != nil {
 			return mcp.NewToolResultError("滚动重启 DaemonSet 失败: " + err.Error()), nil
 		}
@@ -326,7 +312,7 @@ func NewMCPServer() *MCPServer {
 		if clusterName == "" {
 			return mcp.NewToolResultError("参数 cluster_name 必填"), nil
 		}
-		version, err := tools.GetK8sVersionTool(dbConn, proxy, clusterName)
+		version, err := tools.GetK8sVersionTool(proxy, clusterName)
 		if err != nil {
 			return mcp.NewToolResultError("获取 k8s 版本失败: " + err.Error()), nil
 		}
@@ -341,15 +327,11 @@ func NewMCPServer() *MCPServer {
 func (s *MCPServer) ServeHTTP() *server.StreamableHTTPServer {
 	return server.NewStreamableHTTPServer(s.server)
 }
+
 func (s *MCPServer) ServeStdio() error {
 	return server.ServeStdio(s.server)
 }
 
-// 生成全局唯一 session_id
 func generateSessionID() string {
 	return "mcp-session-" + uuid.NewString()
 }
-
-// 工具外部需实现 generateSessionID，推荐用 uuid：
-// import "github.com/google/uuid"
-// func generateSessionID() string { return uuid.NewString() }
