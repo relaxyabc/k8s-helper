@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/relaxyabc/k8s-helper/common"
 	"github.com/relaxyabc/k8s-helper/crypto"
 )
 
@@ -144,14 +145,18 @@ func (sm *HTTPSessionManager) cleanupExpiredSessions() {
 
 func SessionMiddleware(sm *HTTPSessionManager, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[SESSION] RequestURI: %s, Header.Mcp-Session-Id: %s", r.RequestURI, r.Header.Get("Mcp-Session-Id"))
-		sid := r.Header.Get("Mcp-Session-Id")
-		mcpId := r.URL.Query().Get("mcpId")
+		log.Printf("[SESSION] RequestURI: %s, Header.Mcp-Session-Id: %s", r.RequestURI, r.Header.Get(common.HeaderMcpSessionId))
+		sid := r.Header.Get(common.HeaderMcpSessionId)
+		mcpId := r.URL.Query().Get(common.McpIDParam)
 		var ses *HTTPSession
 		var userId, userRole string
 		if mcpId != "" {
 			mcpId = strings.TrimSpace(mcpId)
-			mcpId, _ = url.QueryUnescape(mcpId)
+			var err error
+			mcpId, err = url.QueryUnescape(mcpId)
+			if err != nil {
+				log.Printf("error unescaping mcpId: %v", err)
+			}
 			mcpId = strings.ReplaceAll(mcpId, " ", "+")
 			userId, userRole = ParseUserIDAndRoleFromSID(mcpId)
 			log.Printf("[SESSION] Parsed mcpId from url: userId=%s, userRole=%s", userId, userRole)
@@ -175,7 +180,7 @@ func SessionMiddleware(sm *HTTPSessionManager, next http.Handler) http.Handler {
 		if ses == nil && userId != "" {
 			ses = sm.CreateSession(userId)
 			ses.Data["role"] = userRole
-			w.Header().Set("Mcp-Session-Id", ses.ID)
+			w.Header().Set(common.HeaderMcpSessionId, ses.ID)
 			// 同步更新 sessionUserInfoMap
 			sessionUserInfoMapMutex.Lock()
 			sessionUserInfoMap[ses.ID] = struct{ UserID, Role string }{userId, userRole}
@@ -183,7 +188,7 @@ func SessionMiddleware(sm *HTTPSessionManager, next http.Handler) http.Handler {
 		}
 		if ses == nil {
 			ses = sm.CreateSession("")
-			w.Header().Set("Mcp-Session-Id", ses.ID)
+			w.Header().Set(common.HeaderMcpSessionId, ses.ID)
 		}
 		if ses == nil || time.Now().After(ses.ExpiresAt) {
 			w.WriteHeader(http.StatusUnauthorized)

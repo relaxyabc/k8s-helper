@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/relaxyabc/k8s-helper/common"
 	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/tools"
 
@@ -362,5 +363,5 @@ func (s *MCPServer) ServeStdio() error {
 }
 
 func generateSessionID() string {
-	return "mcp-session-" + uuid.NewString()
+	return common.SessionIdPrefix + uuid.NewString()
 }

@@ -19,8 +19,10 @@ func main() {
 	var transport string
 	var dbhost, dbport, dbname, dbuser, dbpass, proxy string
 	var aesKeyFlag string
+	var addr string
 	flag.StringVar(&transport, "t", "", "Transport type (stdio, http, or sse)")
 	flag.StringVar(&transport, "transport", "", "Transport type (stdio, http, or sse)")
+	flag.StringVar(&addr, "addr", "8080", "服务监听地址端口")
 	flag.StringVar(&dbhost, "dbhost", "localhost", "数据库地址")
 	flag.StringVar(&dbport, "dbport", "5432", "数据库端口")
 	flag.StringVar(&dbname, "dbname", "postgres", "数据库名")
@@ -59,19 +61,23 @@ func main() {
 		// 自定义 /mcp handler，显式处理 sid、用户、会话注册
 		mux.Handle("/mcp", s.ServeHTTP())
 		handler := mcp.SessionMiddleware(httpSessionMgr, mux)
-		addr := ":8080"
-		log.Printf("[MCP] HTTP server listening on %s (via MCPServer)", addr)
-		if err := http.ListenAndServe(addr, handler); err != nil {
+		listenAddr := ":" + addr
+		log.Printf("[MCP] HTTP server listening on %s (via MCPServer)", listenAddr)
+		if err := http.ListenAndServe(listenAddr, handler); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	case "sse":
-		log.Printf("[MCP] Starting SSE server on :8080")
+		listenAddr := ":" + addr
+		log.Printf("[MCP] Starting SSE server on %s", listenAddr)
+
+		baseURL := "http://localhost:" + addr
+
 		sseServer := mcp.NewSSEServer(s, httpSessionMgr,
 			server.WithStaticBasePath("/mcp"),
 			server.WithKeepAliveInterval(30*time.Second),
-			server.WithBaseURL("http://localhost:8080"),
+			server.WithBaseURL(baseURL),
 		)
-		sseServer.Start(":8080")
+		sseServer.Start(listenAddr)
 	default:
 		log.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
 	}

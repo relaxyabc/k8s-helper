@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/relaxyabc/k8s-helper/common"
 )
 
 type SSEServer struct {
@@ -18,7 +19,7 @@ func NewSSEServer(mcpServer *MCPServer, sm *HTTPSessionManager, opts ...server.S
 	baseOpts := []server.SSEOption{
 		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			sid := ""
-			mcpId := r.URL.Query().Get("mcpId")
+			mcpId := r.URL.Query().Get(common.McpIDParam)
 			log.Printf("[MCP-SSE] new sse request, mcpId=%s", mcpId)
 			if mcpId != "" {
 				mcpId = strings.TrimSpace(mcpId)
@@ -42,7 +43,7 @@ func NewSSEServer(mcpServer *MCPServer, sm *HTTPSessionManager, opts ...server.S
 				sid = ses.ID
 			}
 
-			return context.WithValue(ctx, "mcp-session", sid)
+			return context.WithValue(ctx, common.ContextKeyMcpSession, sid)
 		}),
 	}
 	allOpts := append(baseOpts, opts...)
