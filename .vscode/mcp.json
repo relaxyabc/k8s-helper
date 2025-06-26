@@ -1,6 +1,5 @@
 {
     "servers": {
-        // v2 支持 stdio 和 http (http 模式运行)
         "mcp-k8s-2transport-http": {
             "url": "http://localhost:8080/mcp?mcpId=oFdXt8mcv0k5cmAri02v3xjmhl+/v2n60YzyiJnn0NM= "
         }

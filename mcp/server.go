@@ -18,12 +18,17 @@ import (
 
 var (
 	proxy     string
-	Transport string // 当前运行协议类型
+	transport string // 当前运行协议类型
 )
 
-func Init(proxyStr, aesKey string) {
+func Init(proxyStr, aesKey, transportType string) {
 	proxy = proxyStr
 	AESKey = aesKey
+	transport = transportType
+}
+
+func GetTransport() string {
+	return transport
 }
 
 type MCPServer struct {
@@ -91,9 +96,12 @@ func NewMCPServer() *MCPServer {
 			if b, ok := args["body"].(string); ok {
 				body = b
 			}
-			sid, _ := ctx.Value("mcp-session").(string)
+			sid := ""
+			if session := server.ClientSessionFromContext(ctx); session != nil {
+				sid = session.SessionID()
+			}
 			paramsJson, _ := json.Marshal(args)
-			fmt.Printf("[%s][%s][sessionid:%s]-%s-%s\n", time.Now().Format("2006-01-02 15:04:05"), Transport, sid, toolName, string(paramsJson))
+			fmt.Printf("[%s][%s][sessionid:%s]-%s-%s\n", time.Now().Format("2006-01-02 15:04:05"), transport, sid, toolName, string(paramsJson))
 			return handler(ctx, method, url, body)
 		})
 	}
@@ -262,7 +270,7 @@ func NewMCPServer() *MCPServer {
 		if err != nil {
 			return mcp.NewToolResultError("滚动重启 Deployment 失败: " + err.Error()), nil
 		}
-		return mcp.NewToolResultText("Deployment 滚动重启成功"), nil
+		return mcp.NewToolResultText("Deployment rollout restarted successfully."), nil
 	})
 	// rollout_restart_daemonset
 	registerHTTPTool("rollout_restart_daemonset", "滚动重启指定 DaemonSet (HTTP tool 风格)", func(ctx context.Context, method, url, body string) (*mcp.CallToolResult, error) {
@@ -319,9 +327,30 @@ func NewMCPServer() *MCPServer {
 		return mcp.NewToolResultText(version), nil
 	})
 
-	return &MCPServer{
-		server: mcpServer,
-	}
+	mcpServer.AddTool(
+		mcp.NewTool("start_sse_push",
+			mcp.WithDescription("Starts a background task that pushes notifications to the client via SSE."),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			sid := ""
+			if session := server.ClientSessionFromContext(ctx); session != nil {
+				sid = session.SessionID()
+			}
+			log.Printf("[MCP-SSE] Tool 'start_sse_push' called for session: %s", sid)
+
+			mcpServer := server.ServerFromContext(ctx)
+			if mcpServer == nil {
+				log.Printf("[MCP-SSE] Could not get server from context for session: %s", sid)
+				return mcp.NewToolResultError("could not get server from context"), nil
+			}
+
+			StartPushNotifications(ctx, mcpServer)
+
+			return mcp.NewToolResultText("SSE push notifications started. You will receive 5 messages over 15 seconds."), nil
+		},
+	)
+
+	return &MCPServer{server: mcpServer}
 }
 
 func (s *MCPServer) ServeHTTP() *server.StreamableHTTPServer {

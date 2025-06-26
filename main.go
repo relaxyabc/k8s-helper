@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/mcp"
 )
@@ -33,9 +34,8 @@ func main() {
 		transport = "stdio"
 	}
 
-	mcp.Transport = transport
 	dao.InitDBByArgs(dbhost, dbport, dbname, dbuser, dbpass)
-	mcp.Init(proxy, aesKeyFlag)
+	mcp.Init(proxy, aesKeyFlag, transport)
 
 	s := mcp.NewMCPServer()
 
@@ -66,7 +66,11 @@ func main() {
 		}
 	case "sse":
 		log.Printf("[MCP] Starting SSE server on :8080")
-		sseServer := mcp.NewSSEServer(s)
+		sseServer := mcp.NewSSEServer(s, httpSessionMgr,
+			server.WithStaticBasePath("/mcp"),
+			server.WithKeepAliveInterval(30*time.Second),
+			server.WithBaseURL("http://localhost:8080"),
+		)
 		sseServer.Start(":8080")
 	default:
 		log.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
