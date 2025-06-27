@@ -39,15 +39,15 @@ func main() {
 	dao.InitDBByArgs(dbhost, dbport, dbname, dbuser, dbpass)
 	mcp.Init(proxy, aesKeyFlag, transport)
 
-	s := mcp.NewMCPServer()
-
 	switch transport {
 	case "stdio":
+		s := mcp.NewMCPServer()
 		log.Println("[MCP] Starting in stdio mode, waiting for client to connect...")
 		if err := s.ServeStdio(); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	case "http":
+		s := mcp.NewMCPServer()
 		log.Println("[MCP] Starting in HTTP mode, using MCPServer as handler...")
 		mux := http.NewServeMux()
 		mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +67,10 @@ func main() {
 			log.Fatalf("Server error: %v", err)
 		}
 	case "sse":
+
+		// Create the MCP server with the hooks.
+		s := mcp.NewMCPServer()
+
 		listenAddr := ":" + addr
 		log.Printf("[MCP] Starting SSE server on %s", listenAddr)
 
@@ -74,10 +78,45 @@ func main() {
 
 		sseServer := mcp.NewSSEServer(s, httpSessionMgr,
 			server.WithStaticBasePath("/mcp"),
-			server.WithKeepAliveInterval(30*time.Second),
+			server.WithKeepAliveInterval(3*time.Minute),
 			server.WithBaseURL(baseURL),
 		)
-		sseServer.Start(listenAddr)
+
+		// 注册 SSE 推送工具，传递 sseServer
+		s.RegisterSSEPushTool(sseServer)
+
+		mux := http.NewServeMux()
+
+		// Handle the base /mcp path for handshakes.
+		mcpHandler := s.ServeHTTP()
+		mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
+			if r.URL.Path != "/mcp" {
+				http.NotFound(w, r)
+				return
+			}
+			mcpHandler.ServeHTTP(w, r)
+		})
+
+		// Handle the SSE connection path.
+		sseHandler := sseServer.SSEHandler()
+		mux.Handle("/mcp/sse", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp/sse handler", r.URL.Path)
+			sseHandler.ServeHTTP(w, r)
+		}))
+
+		// Handle the SSE message path.
+		messageHandler := sseServer.MessageHandler()
+		mux.Handle("/mcp/message", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp/message handler", r.URL.Path)
+			messageHandler.ServeHTTP(w, r)
+		}))
+
+		handler := mcp.SessionMiddleware(httpSessionMgr, mux)
+		log.Printf("SSE server listening on %s", listenAddr)
+		if err := http.ListenAndServe(listenAddr, handler); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
 	default:
 		log.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
 	}

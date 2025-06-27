@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -145,58 +146,83 @@ func (sm *HTTPSessionManager) cleanupExpiredSessions() {
 
 func SessionMiddleware(sm *HTTPSessionManager, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[SESSION] RequestURI: %s, Header.Mcp-Session-Id: %s", r.RequestURI, r.Header.Get(common.HeaderMcpSessionId))
+		log.Printf("[SESSION_TRACE] ===== START: RequestURI: %s =====", r.RequestURI)
 		sid := r.Header.Get(common.HeaderMcpSessionId)
+		log.Printf("[SESSION_TRACE] 1. Got Mcp-Session-Id from header: '%s'", sid)
+
 		mcpId := r.URL.Query().Get(common.McpIDParam)
 		var ses *HTTPSession
 		var userId, userRole string
+
 		if mcpId != "" {
+			log.Printf("[SESSION_TRACE] 2. Found mcpId in URL: '%s'", mcpId)
 			mcpId = strings.TrimSpace(mcpId)
 			var err error
 			mcpId, err = url.QueryUnescape(mcpId)
 			if err != nil {
-				log.Printf("error unescaping mcpId: %v", err)
+				log.Printf("[SESSION_TRACE] 2a. ERROR unescaping mcpId: %v", err)
 			}
 			mcpId = strings.ReplaceAll(mcpId, " ", "+")
 			userId, userRole = ParseUserIDAndRoleFromSID(mcpId)
-			log.Printf("[SESSION] Parsed mcpId from url: userId=%s, userRole=%s", userId, userRole)
+			log.Printf("[SESSION_TRACE] 2b. Parsed mcpId: userId=%s, userRole=%s", userId, userRole)
+		} else {
+			log.Printf("[SESSION_TRACE] 2. mcpId not found in URL.")
 		}
+
 		if sid != "" {
+			log.Printf("[SESSION_TRACE] 3. Attempting to get session with sid: '%s'", sid)
 			if s, ok := sm.GetSession(sid); ok {
 				ses = s
-				// 如果 session 没有 role 且 mcpId 可解析，则补充 role
-				if ses != nil && userRole != "" {
+				log.Printf("[SESSION_TRACE] 3a. SUCCESS: Found active session: ID=%s, UserID=%s, ExpiresAt=%v", ses.ID, ses.UserID, ses.ExpiresAt)
+				if userRole != "" {
 					if v, ok := ses.Data["role"]; !ok || v == "" {
 						ses.Data["role"] = userRole
-						// 同步更新 sessionUserInfoMap
 						sessionUserInfoMapMutex.Lock()
 						sessionUserInfoMap[ses.ID] = struct{ UserID, Role string }{ses.UserID, userRole}
 						sessionUserInfoMapMutex.Unlock()
+						log.Printf("[SESSION_TRACE] 3b. UPDATED session role from mcpId: role=%s", userRole)
 					}
 				}
+			} else {
+				log.Printf("[SESSION_TRACE] 3a. FAILED: No active session found for sid: '%s'", sid)
 			}
+		} else {
+			log.Printf("[SESSION_TRACE] 3. No Mcp-Session-Id in header, skipping session retrieval.")
 		}
-		// 如果 session 还不存在，且 mcpId 可解析，则用 mcpId 结果新建 session
+
 		if ses == nil && userId != "" {
+			log.Printf("[SESSION_TRACE] 4. Creating new session from mcpId: userId=%s, userRole=%s", userId, userRole)
 			ses = sm.CreateSession(userId)
 			ses.Data["role"] = userRole
 			w.Header().Set(common.HeaderMcpSessionId, ses.ID)
-			// 同步更新 sessionUserInfoMap
 			sessionUserInfoMapMutex.Lock()
 			sessionUserInfoMap[ses.ID] = struct{ UserID, Role string }{userId, userRole}
 			sessionUserInfoMapMutex.Unlock()
+			log.Printf("[SESSION_TRACE] 4a. SUCCESS: Created new session: ID=%s", ses.ID)
 		}
+
 		if ses == nil {
+			log.Printf("[SESSION_TRACE] 5. Creating new EMPTY session.")
 			ses = sm.CreateSession("")
 			w.Header().Set(common.HeaderMcpSessionId, ses.ID)
+			log.Printf("[SESSION_TRACE] 5a. SUCCESS: Created new empty session: ID=%s", ses.ID)
 		}
-		if ses == nil || time.Now().After(ses.ExpiresAt) {
+
+		log.Printf("[SESSION_TRACE] 6. Final validation check for session: ID=%s", ses.ID)
+		if time.Now().After(ses.ExpiresAt) {
+			log.Printf("[SESSION_TRACE] 6a. FAILED: Session is expired. ExpiresAt=%v, Now=%v", ses.ExpiresAt, time.Now())
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("session expired or invalid"))
+			log.Printf("[SESSION_TRACE] ===== END: Responded with 401 Unauthorized =====")
 			return
 		}
-		// 直接传递原始 context
-		next.ServeHTTP(w, r)
+
+		log.Printf("[SESSION_TRACE] 6a. SUCCESS: Session is valid.")
+		// Add session ID to context for downstream handlers
+		ctx := context.WithValue(r.Context(), common.ContextKeyMcpSession, ses.ID)
+		log.Printf("[SESSION_TRACE] 7. Injecting sid '%s' into request context.", ses.ID)
+		log.Printf("[SESSION_TRACE] ===== END: Passing request to next handler =====")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -226,4 +252,27 @@ func GetUserRoleBySessionID(sessionID string) string {
 	sessionUserInfoMapMutex.RUnlock()
 	log.Printf("[SESSION] GetUserRoleBySessionID: sessionID=%s, role=%s", sessionID, role)
 	return role
+}
+
+// DebugPrintAllSessions 每秒输出当前所有内存 session 信息
+func (sm *HTTPSessionManager) DebugPrintAllSessions() {
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+			sm.mutex.RLock()
+			if len(sm.sessions) == 0 {
+				log.Printf("[SESSION-DEBUG] 当前没有任何 session")
+			} else {
+				log.Printf("[SESSION-DEBUG] 当前所有 session:")
+				for sid, s := range sm.sessions {
+					role := ""
+					if v, ok := s.Data["role"]; ok {
+						role, _ = v.(string)
+					}
+					log.Printf("[SESSION-DEBUG] sid=%s, userID=%s, role=%s, expires=%v", sid, s.UserID, role, s.ExpiresAt)
+				}
+			}
+			sm.mutex.RUnlock()
+		}
+	}()
 }

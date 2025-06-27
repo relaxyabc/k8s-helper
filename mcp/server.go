@@ -36,10 +36,8 @@ type MCPServer struct {
 	server *server.MCPServer
 }
 
-func NewMCPServer() *MCPServer {
-	mcpServer := server.NewMCPServer(
-		"k8s-helper",
-		"1.0.0",
+func NewMCPServer(opts ...server.ServerOption) *MCPServer {
+	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithRecovery(),
 		server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
@@ -79,6 +77,12 @@ func NewMCPServer() *MCPServer {
 			}())
 			return filtered
 		}),
+	}
+	allOpts := append(defaultOpts, opts...)
+	mcpServer := server.NewMCPServer(
+		"k8s-helper",
+		"1.0.0",
+		allOpts...,
 	)
 
 	// 工具注册（全部 http tool 风格）
@@ -328,29 +332,6 @@ func NewMCPServer() *MCPServer {
 		return mcp.NewToolResultText(version), nil
 	})
 
-	mcpServer.AddTool(
-		mcp.NewTool("start_sse_push",
-			mcp.WithDescription("Starts a background task that pushes notifications to the client via SSE."),
-		),
-		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			sid := ""
-			if session := server.ClientSessionFromContext(ctx); session != nil {
-				sid = session.SessionID()
-			}
-			log.Printf("[MCP-SSE] Tool 'start_sse_push' called for session: %s", sid)
-
-			mcpServer := server.ServerFromContext(ctx)
-			if mcpServer == nil {
-				log.Printf("[MCP-SSE] Could not get server from context for session: %s", sid)
-				return mcp.NewToolResultError("could not get server from context"), nil
-			}
-
-			StartPushNotifications(ctx, mcpServer)
-
-			return mcp.NewToolResultText("SSE push notifications started. You will receive 5 messages over 15 seconds."), nil
-		},
-	)
-
 	return &MCPServer{server: mcpServer}
 }
 
@@ -364,4 +345,29 @@ func (s *MCPServer) ServeStdio() error {
 
 func generateSessionID() string {
 	return common.SessionIdPrefix + uuid.NewString()
+}
+
+func (s *MCPServer) RegisterSSEPushTool(sseServer *SSEServer) {
+	s.server.AddTool(
+		mcp.NewTool("start_sse_push",
+			mcp.WithDescription("Starts a background task that pushes notifications to the client via SSE."),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			appSid := ""
+			// We get our session from the HTTP session manager now, not the mcp context.
+			if sid, ok := ctx.Value(common.ContextKeyMcpSession).(string); ok {
+				appSid = sid
+			}
+
+			if appSid == "" {
+				log.Printf("[MCP-SSE] ERROR: Could not get application session ID from context for 'start_sse_push' tool.")
+				return mcp.NewToolResultError("could not get application session ID from context"), nil
+			}
+			log.Printf("[MCP-SSE] Tool 'start_sse_push' called for application session: %s", appSid)
+
+			StartPushNotifications(appSid, sseServer)
+
+			return mcp.NewToolResultText("SSE push notifications started. You will receive 5 messages over 15 seconds."), nil
+		},
+	)
 }
