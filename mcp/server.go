@@ -3,8 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -51,7 +51,7 @@ func NewMCPServer(opts ...server.ServerOption) *MCPServer {
 			for _, t := range tools {
 				toolNames = append(toolNames, t.Name)
 			}
-			log.Printf("[TOOL_FILTER] sid=%s, role=%s, all_tools=%v", sid, role, toolNames)
+			klog.Infof("[TOOL_FILTER] sid=%s, role=%s, all_tools=%v", sid, role, toolNames)
 			if role == "admin" {
 				return tools // admin 全部
 			}
@@ -68,7 +68,7 @@ func NewMCPServer(opts ...server.ServerOption) *MCPServer {
 					}
 				}
 			}
-			log.Printf("[TOOL_FILTER] sid=%s, role=%s, filtered_tools=%v", sid, role, func() []string {
+			klog.Infof("[TOOL_FILTER] sid=%s, role=%s, filtered_tools=%v", sid, role, func() []string {
 				names := []string{}
 				for _, t := range filtered {
 					names = append(names, t.Name)
@@ -106,7 +106,7 @@ func NewMCPServer(opts ...server.ServerOption) *MCPServer {
 				sid = session.SessionID()
 			}
 			paramsJson, _ := json.Marshal(args)
-			fmt.Printf("[%s][%s][sessionid:%s]-%s-%s\n", time.Now().Format("2006-01-02 15:04:05"), transport, sid, toolName, string(paramsJson))
+			klog.Infof("[%s][%s][sessionid:%s]-%s-%s", time.Now().Format("2006-01-02 15:04:05"), transport, sid, toolName, string(paramsJson))
 			return handler(ctx, method, url, body)
 		})
 	}
@@ -331,6 +331,69 @@ func NewMCPServer(opts ...server.ServerOption) *MCPServer {
 		}
 		return mcp.NewToolResultText(version), nil
 	})
+	// get_configmaps
+	registerHTTPTool("get_configmaps", "Get configmaps in a namespace for a cluster (HTTP tool 风格)", func(ctx context.Context, method, url, body string) (*mcp.CallToolResult, error) {
+		if method != "GET" || !strings.HasPrefix(url, "/configmaps") {
+			return mcp.NewToolResultError("仅支持 GET /configmaps?cluster_name=xxx&namespace=xxx"), nil
+		}
+		q := url[strings.Index(url, "?")+1:]
+		params := make(map[string]string)
+		for _, kv := range strings.Split(q, "&") {
+			if kv == "" {
+				continue
+			}
+			arr := strings.SplitN(kv, "=", 2)
+			if len(arr) == 2 {
+				params[arr[0]] = arr[1]
+			}
+		}
+		clusterName := params["cluster_name"]
+		namespace := params["namespace"]
+		if clusterName == "" || namespace == "" {
+			return mcp.NewToolResultError("参数 cluster_name 和 namespace 必填"), nil
+		}
+		configmaps, err := tools.GetConfigMapsTool(proxy, clusterName, namespace)
+		if err != nil {
+			return mcp.NewToolResultError("获取 configmaps 失败: " + err.Error()), nil
+		}
+		jsonStr, err := json.Marshal(configmaps)
+		if err != nil {
+			return mcp.NewToolResultError("序列化失败: " + err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(jsonStr)), nil
+	})
+	// configmap_detail
+	registerHTTPTool("configmap_detail", "Get detail of a configmap in a namespace for a cluster (HTTP tool 风格)", func(ctx context.Context, method, url, body string) (*mcp.CallToolResult, error) {
+		if method != "GET" || !strings.HasPrefix(url, "/configmap_detail") {
+			return mcp.NewToolResultError("仅支持 GET /configmap_detail?cluster_name=xxx&namespace=xxx&name=xxx"), nil
+		}
+		q := url[strings.Index(url, "?")+1:]
+		params := make(map[string]string)
+		for _, kv := range strings.Split(q, "&") {
+			if kv == "" {
+				continue
+			}
+			arr := strings.SplitN(kv, "=", 2)
+			if len(arr) == 2 {
+				params[arr[0]] = arr[1]
+			}
+		}
+		clusterName := params["cluster_name"]
+		namespace := params["namespace"]
+		name := params["name"]
+		if clusterName == "" || namespace == "" || name == "" {
+			return mcp.NewToolResultError("参数 cluster_name、namespace、name 必填"), nil
+		}
+		data, err := tools.GetConfigMapDetailTool(proxy, clusterName, namespace, name)
+		if err != nil {
+			return mcp.NewToolResultError("获取 configmap 详情失败: " + err.Error()), nil
+		}
+		jsonStr, err := json.Marshal(data)
+		if err != nil {
+			return mcp.NewToolResultError("序列化失败: " + err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(jsonStr)), nil
+	})
 
 	return &MCPServer{server: mcpServer}
 }
@@ -353,21 +416,81 @@ func (s *MCPServer) RegisterSSEPushTool(sseServer *SSEServer) {
 			mcp.WithDescription("Starts a background task that pushes notifications to the client via SSE."),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			appSid := ""
-			// We get our session from the HTTP session manager now, not the mcp context.
-			if sid, ok := ctx.Value(common.ContextKeyMcpSession).(string); ok {
-				appSid = sid
+			mcpServer := server.ServerFromContext(ctx)
+			if mcpServer == nil {
+				klog.Errorf("[MCP-SSE] ERROR: Could not get MCPServer from context for 'start_sse_push' tool.")
+				return mcp.NewToolResultError("could not get MCPServer from context"), nil
 			}
 
-			if appSid == "" {
-				log.Printf("[MCP-SSE] ERROR: Could not get application session ID from context for 'start_sse_push' tool.")
-				return mcp.NewToolResultError("could not get application session ID from context"), nil
+			for i := 1; i <= 5; i++ {
+				msg := map[string]interface{}{
+					"message":   "SSE推送消息：第" + strconv.Itoa(i) + "条",
+					"index":     i,
+					"timestamp": time.Now().Unix(),
+				}
+				err := mcpServer.SendNotificationToClient(ctx, "custom_event", msg)
+				if err != nil {
+					klog.Errorf("[MCP-SSE] Failed to send notification: %v", err)
+				}
+				time.Sleep(3 * time.Second)
 			}
-			log.Printf("[MCP-SSE] Tool 'start_sse_push' called for application session: %s", appSid)
 
-			StartPushNotifications(appSid, sseServer)
-
-			return mcp.NewToolResultText("SSE push notifications started. You will receive 5 messages over 15 seconds."), nil
+			return mcp.NewToolResultText("SSE push notifications sent. You will receive 5 messages over 15 seconds."), nil
 		},
 	)
+}
+
+// RegisterSession 注册 session 到 MCP 服务器，确保 sessionId 同步
+func (s *MCPServer) RegisterSession(sessionID string) {
+	klog.Infof("[MCP-SERVER] Registering session: %s", sessionID)
+
+	// 创建一个简单的 ClientSession 实现
+	session := &simpleClientSession{
+		sessionID:   sessionID,
+		notifyChan:  make(chan mcp.JSONRPCNotification, 10), // 缓冲通道
+		initialized: true,
+	}
+
+	// 调用底层的 MCP 库 RegisterSession 函数
+	ctx := context.Background()
+	err := s.server.RegisterSession(ctx, session)
+	if err != nil {
+		klog.Errorf("[MCP-SERVER] Failed to register session %s: %v", sessionID, err)
+	} else {
+		klog.Infof("[MCP-SERVER] Successfully registered session: %s", sessionID)
+	}
+}
+
+// UnregisterSession 从 MCP 服务器注销 session
+func (s *MCPServer) UnregisterSession(sessionID string) {
+	klog.Infof("[MCP-SERVER] Unregistering session: %s", sessionID)
+
+	// 调用底层的 MCP 库 UnregisterSession 函数
+	ctx := context.Background()
+	s.server.UnregisterSession(ctx, sessionID)
+
+	klog.Infof("[MCP-SERVER] Successfully unregistered session: %s", sessionID)
+}
+
+// simpleClientSession 实现 ClientSession 接口
+type simpleClientSession struct {
+	sessionID   string
+	notifyChan  chan mcp.JSONRPCNotification
+	initialized bool
+}
+
+func (s *simpleClientSession) Initialize() {
+	s.initialized = true
+}
+
+func (s *simpleClientSession) Initialized() bool {
+	return s.initialized
+}
+
+func (s *simpleClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notifyChan
+}
+
+func (s *simpleClientSession) SessionID() string {
+	return s.sessionID
 }

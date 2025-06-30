@@ -100,6 +100,19 @@ func ListDaemonSets(clientset *kubernetes.Clientset, namespace string) ([]string
 	return result, nil
 }
 
+// ListConfigMaps 获取指定命名空间下的 ConfigMap 名称列表
+func ListConfigMaps(clientset *kubernetes.Clientset, namespace string) ([]string, error) {
+	configmaps, err := clientset.CoreV1().ConfigMaps(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	for _, cm := range configmaps.Items {
+		result = append(result, cm.Name)
+	}
+	return result, nil
+}
+
 // RolloutRestartDeployment 滚动重启 Deployment
 func RolloutRestartDeployment(clientset *kubernetes.Clientset, namespace, name string) error {
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
@@ -208,6 +221,19 @@ func GetDaemonSetsTool(proxy, clusterName, namespace string) ([]string, error) {
 	return ListDaemonSets(clientset, namespace)
 }
 
+// GetConfigMapsTool 获取指定集群和命名空间下的 ConfigMap 名称列表
+func GetConfigMapsTool(proxy, clusterName, namespace string) ([]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
+	if err != nil {
+		return nil, err
+	}
+	clientset, err := GetK8sClient(kubeconfig, proxy, true)
+	if err != nil {
+		return nil, err
+	}
+	return ListConfigMaps(clientset, namespace)
+}
+
 // HTTPRequestTool 实现简单的 HTTP 请求
 func HTTPRequestTool(method, url, body string) (string, error) {
 	client := &http.Client{}
@@ -248,4 +274,21 @@ func GetK8sVersionTool(proxy, clusterName string) (string, error) {
 		return "", err
 	}
 	return versionInfo.String(), nil
+}
+
+// GetConfigMapDetailTool 获取指定集群、命名空间、ConfigMap 名称的详细内容
+func GetConfigMapDetailTool(proxy, clusterName, namespace, name string) (map[string]string, error) {
+	kubeconfig, err := dao.GetKubeConfig(clusterName)
+	if err != nil {
+		return nil, err
+	}
+	clientset, err := GetK8sClient(kubeconfig, proxy, true)
+	if err != nil {
+		return nil, err
+	}
+	cm, err := clientset.CoreV1().ConfigMaps(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return cm.Data, nil
 }

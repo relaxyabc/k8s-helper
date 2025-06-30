@@ -2,17 +2,13 @@ package main
 
 import (
 	"flag"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/mcp"
-)
-
-var (
-	httpSessionMgr = mcp.NewHTTPSessionManager(30 * time.Minute)
+	"k8s.io/klog/v2"
 )
 
 func main() {
@@ -42,37 +38,39 @@ func main() {
 	switch transport {
 	case "stdio":
 		s := mcp.NewMCPServer()
-		log.Println("[MCP] Starting in stdio mode, waiting for client to connect...")
+		klog.Info("[MCP] Starting in stdio mode, waiting for client to connect...")
 		if err := s.ServeStdio(); err != nil {
-			log.Fatalf("Server error: %v", err)
+			klog.Fatalf("Server error: %v", err)
 		}
 	case "http":
 		s := mcp.NewMCPServer()
-		log.Println("[MCP] Starting in HTTP mode, using MCPServer as handler...")
+		httpSessionMgr := mcp.NewHTTPSessionManager(30*time.Minute, s)
+		klog.Info("[MCP] Starting in HTTP mode, using MCPServer as handler...")
 		mux := http.NewServeMux()
 		mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
 			c, err := r.Cookie("SESSIONID")
 			if err == nil {
-				httpSessionMgr.DeleteSession(c.Value)
+				httpSessionMgr.DeleteSession(c.Value, s)
 				http.SetCookie(w, &http.Cookie{Name: "SESSIONID", Value: "", Path: "/", MaxAge: -1})
 			}
 			w.Write([]byte("logout success"))
 		})
 		// 自定义 /mcp handler，显式处理 sid、用户、会话注册
 		mux.Handle("/mcp", s.ServeHTTP())
-		handler := mcp.SessionMiddleware(httpSessionMgr, mux)
+		handler := mcp.SessionMiddleware(httpSessionMgr, s, mux)
 		listenAddr := ":" + addr
-		log.Printf("[MCP] HTTP server listening on %s (via MCPServer)", listenAddr)
+		klog.Infof("[MCP] HTTP server listening on %s (via MCPServer)", listenAddr)
 		if err := http.ListenAndServe(listenAddr, handler); err != nil {
-			log.Fatalf("Server error: %v", err)
+			klog.Fatalf("Server error: %v", err)
 		}
 	case "sse":
 
 		// Create the MCP server with the hooks.
 		s := mcp.NewMCPServer()
+		httpSessionMgr := mcp.NewHTTPSessionManager(30*time.Minute, s)
 
 		listenAddr := ":" + addr
-		log.Printf("[MCP] Starting SSE server on %s", listenAddr)
+		klog.Infof("[MCP] Starting SSE server on %s", listenAddr)
 
 		baseURL := "http://localhost:" + addr
 
@@ -90,7 +88,7 @@ func main() {
 		// Handle the base /mcp path for handshakes.
 		mcpHandler := s.ServeHTTP()
 		mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
+			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
 			if r.URL.Path != "/mcp" {
 				http.NotFound(w, r)
 				return
@@ -101,23 +99,23 @@ func main() {
 		// Handle the SSE connection path.
 		sseHandler := sseServer.SSEHandler()
 		mux.Handle("/mcp/sse", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp/sse handler", r.URL.Path)
+			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/sse handler", r.URL.Path)
 			sseHandler.ServeHTTP(w, r)
 		}))
 
 		// Handle the SSE message path.
 		messageHandler := sseServer.MessageHandler()
 		mux.Handle("/mcp/message", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("[ROUTING_DEBUG] Path: %s -> /mcp/message handler", r.URL.Path)
+			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/message handler", r.URL.Path)
 			messageHandler.ServeHTTP(w, r)
 		}))
 
-		handler := mcp.SessionMiddleware(httpSessionMgr, mux)
-		log.Printf("SSE server listening on %s", listenAddr)
+		handler := mcp.SessionMiddleware(httpSessionMgr, s, mux)
+		klog.Infof("SSE server listening on %s", listenAddr)
 		if err := http.ListenAndServe(listenAddr, handler); err != nil {
-			log.Fatalf("Server error: %v", err)
+			klog.Fatalf("Server error: %v", err)
 		}
 	default:
-		log.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
+		klog.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
 	}
 }

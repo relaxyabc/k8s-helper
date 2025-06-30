@@ -2,13 +2,13 @@ package mcp
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/relaxyabc/k8s-helper/common"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -43,13 +43,13 @@ func NewSSEServer(mcpServer *MCPServer, sm *HTTPSessionManager, opts ...server.S
 			// into the request's context.
 			appSessionID, ok := r.Context().Value(common.ContextKeyMcpSession).(string)
 			if !ok || appSessionID == "" {
-				log.Printf("[MCP-SSE] ContextFunc: Could not find application session ID in request context. This is unexpected.")
+				klog.Warningf("[MCP-SSE] ContextFunc: Could not find application session ID in request context. This is unexpected.")
 				return ctx
 			}
 
 			// We add our session ID to the context under a unique key. This context is then
 			// passed along the chain inside the mcp-go library.
-			log.Printf("[MCP-SSE] ContextFunc: Found app session ID '%s'. Placing it into the SSE context.", appSessionID)
+			klog.Infof("[MCP-SSE] ContextFunc: Found app session ID '%s'. Placing it into the SSE context.", appSessionID)
 			return context.WithValue(ctx, AppSessionIDKey{}, appSessionID)
 		}),
 	}

@@ -2,10 +2,10 @@ package dao
 
 import (
 	"fmt"
-	"log"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -15,7 +15,7 @@ var (
 func InitDBByArgs(host, port, dbname, user, password string) {
 	dbInstance, err := initDB(host, port, dbname, user, password)
 	if err != nil {
-		log.Fatalf("数据库连接失败: %v", err)
+		klog.Fatalf("数据库连接失败: %v", err)
 	}
 	dbConn = dbInstance
 	fmt.Println("数据库连接成功")

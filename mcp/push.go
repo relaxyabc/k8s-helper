@@ -1,8 +1,9 @@
 package mcp
 
 import (
-	"log"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 // StartPushNotifications starts a goroutine that periodically sends notifications to the client via SSE.
@@ -17,13 +18,13 @@ func StartPushNotifications(sid string, sseServer *SSEServer) {
 				"count":     i + 1,
 			}
 
-			log.Printf("[MCP-SSE-PUSH] Pushing message to session: %s", sid)
+			klog.Infof("[MCP-SSE-PUSH] Pushing message to session: %s", sid)
 			err := sseServer.SendEventToSession(sid, payload)
 			if err != nil {
-				log.Printf("[MCP-SSE-PUSH] Failed to send notification to session %s: %v. Stopping push.", sid, err)
+				klog.Errorf("[MCP-SSE-PUSH] Failed to send notification to session %s: %v. Stopping push.", sid, err)
 				return
 			}
 		}
-		log.Printf("[MCP-SSE-PUSH] Finished pushing messages for session: %s", sid)
+		klog.Infof("[MCP-SSE-PUSH] Finished pushing messages for session: %s", sid)
 	}()
 }
