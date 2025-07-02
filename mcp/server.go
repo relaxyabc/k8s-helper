@@ -431,7 +431,7 @@ func (s *MCPServer) RegisterSSEPushTool(sseServer *SSEServer) {
 				}
 				klog.Infof("[MCP-SSE] Sending notification %d: %v", i, msg)
 				// notification
-				err := mcpServer.SendNotificationToClient(ctx, "message", msg)
+				err := mcpServer.SendNotificationToClient(ctx, "start_sse_push", msg)
 				if err != nil {
 					klog.Errorf("[MCP-SSE] Failed to send notification: %v", err)
 				} else {
