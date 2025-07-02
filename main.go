@@ -86,20 +86,25 @@ func main() {
 		mux := http.NewServeMux()
 
 		// Handle the base /mcp path for handshakes.
-		mcpHandler := s.ServeHTTP()
-		mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
-			if r.URL.Path != "/mcp" {
-				http.NotFound(w, r)
-				return
-			}
-			mcpHandler.ServeHTTP(w, r)
-		})
+		// mcpHandler := s.ServeHTTP()
+		// mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		// 	klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
+		// 	if r.URL.Path != "/mcp" {
+		// 		http.NotFound(w, r)
+		// 		return
+		// 	}
+		// 	mcpHandler.ServeHTTP(w, r)
+		// })
 
 		// Handle the SSE connection path.
 		sseHandler := sseServer.SSEHandler()
 		mux.Handle("/mcp/sse", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/sse handler", r.URL.Path)
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				w.Write([]byte("Method Not Allowed"))
+				return
+			}
 			sseHandler.ServeHTTP(w, r)
 		}))
 
@@ -109,6 +114,9 @@ func main() {
 			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/message handler", r.URL.Path)
 			messageHandler.ServeHTTP(w, r)
 		}))
+
+		// 注册 /mcp handler，显式处理 sid、用户、会话注册
+		mux.Handle("/mcp", s.ServeHTTP())
 
 		handler := mcp.SessionMiddleware(httpSessionMgr, s, mux)
 		klog.Infof("SSE server listening on %s", listenAddr)

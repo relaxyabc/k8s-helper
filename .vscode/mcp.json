@@ -1,7 +1,7 @@
 {
     "servers": {
         "mcp-k8s-2transport-http": {
-            "url": "http://localhost:8080/mcp?mcpId=oFdXt8mcv0k5cmAri02v3xjmhl+/v2n60YzyiJnn0NM= "
+            "url": "http://127.0.0.1:8080/mcp?mcpId=oFdXt8mcv0k5cmAri02v3xjmhl+/v2n60YzyiJnn0NM= "
         }
     }
 }

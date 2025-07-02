@@ -417,6 +417,7 @@ func (s *MCPServer) RegisterSSEPushTool(sseServer *SSEServer) {
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			mcpServer := server.ServerFromContext(ctx)
+			klog.Infof("[MCP-SSE] start_sse_push called, ctx=%v", ctx)
 			if mcpServer == nil {
 				klog.Errorf("[MCP-SSE] ERROR: Could not get MCPServer from context for 'start_sse_push' tool.")
 				return mcp.NewToolResultError("could not get MCPServer from context"), nil
@@ -428,13 +429,18 @@ func (s *MCPServer) RegisterSSEPushTool(sseServer *SSEServer) {
 					"index":     i,
 					"timestamp": time.Now().Unix(),
 				}
-				err := mcpServer.SendNotificationToClient(ctx, "custom_event", msg)
+				klog.Infof("[MCP-SSE] Sending notification %d: %v", i, msg)
+				// notification
+				err := mcpServer.SendNotificationToClient(ctx, "message", msg)
 				if err != nil {
 					klog.Errorf("[MCP-SSE] Failed to send notification: %v", err)
+				} else {
+					klog.Infof("[MCP-SSE] Notification %d sent successfully", i)
 				}
 				time.Sleep(3 * time.Second)
 			}
 
+			klog.Infof("[MCP-SSE] All notifications sent for start_sse_push")
 			return mcp.NewToolResultText("SSE push notifications sent. You will receive 5 messages over 15 seconds."), nil
 		},
 	)
