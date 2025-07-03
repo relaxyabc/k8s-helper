@@ -264,8 +264,11 @@ func SessionMiddleware(sm *HTTPSessionManager, mcpServer *MCPServer, next http.H
 		ctx := context.WithValue(r.Context(), common.ContextKeyMcpSession, ses.ID)
 		klog.Infof("[SESSION_TRACE] 7. Injecting sid '%s' into request context.", ses.ID)
 
-		// 只在这里统一调用一次 RegisterSession
-		if mcpServer != nil {
+		// 自动集成 streamable context map 管理
+		SetSessionContext(ses.ID, ctx)
+
+		// 保证每次请求都注册 session 到 MCPServer，初始化通知通道
+		if mcpServer != nil && ses != nil {
 			mcpServer.RegisterSession(ses.ID)
 		}
 

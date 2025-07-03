@@ -500,3 +500,13 @@ func (s *simpleClientSession) NotificationChannel() chan<- mcp.JSONRPCNotificati
 func (s *simpleClientSession) SessionID() string {
 	return s.sessionID
 }
+
+// 获取底层原始 server.MCPServer
+func (s *MCPServer) GetRawServer() *server.MCPServer {
+	return s.server
+}
+
+// 导出 sessionID 生成函数，供外部调用
+func GenerateSessionID() string {
+	return generateSessionID()
+}

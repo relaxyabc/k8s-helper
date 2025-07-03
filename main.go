@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"time"
 
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/relaxyabc/k8s-helper/dao"
 	"github.com/relaxyabc/k8s-helper/mcp"
@@ -16,8 +19,8 @@ func main() {
 	var dbhost, dbport, dbname, dbuser, dbpass, proxy string
 	var aesKeyFlag string
 	var addr string
-	flag.StringVar(&transport, "t", "", "Transport type (stdio, http, or sse)")
-	flag.StringVar(&transport, "transport", "", "Transport type (stdio, http, or sse)")
+	flag.StringVar(&transport, "t", "", "Transport type (stdio, http, or streamable)")
+	flag.StringVar(&transport, "transport", "", "Transport type (stdio, http, or streamable)")
 	flag.StringVar(&addr, "addr", "8080", "服务监听地址端口")
 	flag.StringVar(&dbhost, "dbhost", "localhost", "数据库地址")
 	flag.StringVar(&dbport, "dbport", "5432", "数据库端口")
@@ -44,86 +47,139 @@ func main() {
 		}
 	case "http":
 		s := mcp.NewMCPServer()
-		httpSessionMgr := mcp.NewHTTPSessionManager(30*time.Minute, s)
 		klog.Info("[MCP] Starting in HTTP mode, using MCPServer as handler...")
 		mux := http.NewServeMux()
 		mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
-			c, err := r.Cookie("SESSIONID")
+			_, err := r.Cookie("SESSIONID")
 			if err == nil {
-				httpSessionMgr.DeleteSession(c.Value, s)
 				http.SetCookie(w, &http.Cookie{Name: "SESSIONID", Value: "", Path: "/", MaxAge: -1})
 			}
 			w.Write([]byte("logout success"))
 		})
 		// 自定义 /mcp handler，显式处理 sid、用户、会话注册
 		mux.Handle("/mcp", s.ServeHTTP())
-		handler := mcp.SessionMiddleware(httpSessionMgr, s, mux)
 		listenAddr := ":" + addr
 		klog.Infof("[MCP] HTTP server listening on %s (via MCPServer)", listenAddr)
-		if err := http.ListenAndServe(listenAddr, handler); err != nil {
+		if err := http.ListenAndServe(listenAddr, mux); err != nil {
 			klog.Fatalf("Server error: %v", err)
 		}
-	case "sse":
-
-		// Create the MCP server with the hooks.
-		s := mcp.NewMCPServer()
-		httpSessionMgr := mcp.NewHTTPSessionManager(30*time.Minute, s)
-
-		listenAddr := ":" + addr
-		klog.Infof("[MCP] Starting SSE server on %s", listenAddr)
-
-		baseURL := "http://localhost:" + addr
-
-		sseServer := mcp.NewSSEServer(s, httpSessionMgr,
-			server.WithStaticBasePath("/mcp"),
-			server.WithKeepAliveInterval(3*time.Minute),
-			server.WithBaseURL(baseURL),
+	case "streamable":
+		// 1. 创建一个新的 MCP 服务器实例
+		mcpServer := server.NewMCPServer(
+			"k8s-helper",          // 服务器名称
+			"1.0.0",               // 服务器版本
+			server.WithRecovery(), // 启用崩溃恢复
 		)
 
-		// 注册 SSE 推送工具，传递 sseServer
-		s.RegisterSSEPushTool(sseServer)
+		// 2. 添加一个用于演示服务器端推送的工具
+		streamTool := mcpgo.NewTool(
+			"start_stream",
+			mcpgo.WithDescription("Starts a simulated long-running process and streams progress updates."),
+			mcpgo.WithNumber("duration_seconds", mcpgo.Required(), mcpgo.Description("Duration of the simulated process in seconds.")),
+		)
 
-		mux := http.NewServeMux()
-
-		// Handle the base /mcp path for handshakes.
-		// mcpHandler := s.ServeHTTP()
-		// mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-		// 	klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp handler", r.URL.Path)
-		// 	if r.URL.Path != "/mcp" {
-		// 		http.NotFound(w, r)
-		// 		return
-		// 	}
-		// 	mcpHandler.ServeHTTP(w, r)
-		// })
-
-		// Handle the SSE connection path.
-		sseHandler := sseServer.SSEHandler()
-		mux.Handle("/mcp/sse", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/sse handler", r.URL.Path)
-			if r.Method != http.MethodGet {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				w.Write([]byte("Method Not Allowed"))
-				return
+		// 3. 为工具添加处理函数
+		mcpServer.AddTool(streamTool, func(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			duration, err := request.RequireInt("duration_seconds")
+			if err != nil {
+				return mcpgo.NewToolResultError(fmt.Sprintf("Invalid duration: %v", err)), nil
 			}
-			sseHandler.ServeHTTP(w, r)
-		}))
 
-		// Handle the SSE message path.
-		messageHandler := sseServer.MessageHandler()
-		mux.Handle("/mcp/message", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			klog.Infof("[ROUTING_DEBUG] Path: %s -> /mcp/message handler", r.URL.Path)
-			messageHandler.ServeHTTP(w, r)
-		}))
+			// 从上下文中获取 MCP 服务器和会话
+			mcpServer := server.ServerFromContext(ctx)
+			if mcpServer == nil {
+				klog.Infof("Could not get MCPServer from context. This tool requires an active session for streaming.")
+				return mcpgo.NewToolResultError("Server session not found for streaming."), nil
+			}
 
-		// 注册 /mcp handler，显式处理 sid、用户、会话注册
-		mux.Handle("/mcp", s.ServeHTTP())
+			session := server.ClientSessionFromContext(ctx)
+			if session == nil {
+				klog.Infof("Could not get ClientSession from context. This tool requires an active session for streaming.")
+				return mcpgo.NewToolResultError("Server session not found for streaming."), nil
+			}
 
-		handler := mcp.SessionMiddleware(httpSessionMgr, s, mux)
-		klog.Infof("SSE server listening on %s", listenAddr)
-		if err := http.ListenAndServe(listenAddr, handler); err != nil {
-			klog.Fatalf("Server error: %v", err)
-		}
+			klog.Infof("Starting simulated stream for %d seconds for session %s", duration, session.SessionID())
+
+			// 模拟长时间运行的任务，并发送进度通知
+			for i := 0; i < duration; i++ {
+				select {
+				case <-ctx.Done(): // 检查请求上下文是否被取消（例如客户端断开连接）
+					klog.Infof("Stream for session %s cancelled.", session.SessionID())
+					return mcpgo.NewToolResultText("Stream cancelled."), nil
+				case <-time.After(1 * time.Second):
+					progress := float64(i+1) / float64(duration) * 100
+					message := fmt.Sprintf("Progress: %.2f%% (%d/%d seconds)", progress, i+1, duration)
+					klog.Infof("Session %s: Sending progress: %s", session.SessionID(), message)
+
+					// 发送通知
+					msg := map[string]interface{}{
+						"message":   message,
+						"progress":  progress,
+						"timestamp": time.Now().Unix(),
+					}
+					err := mcpServer.SendNotificationToClient(ctx, "notifications/progress", msg)
+					if err != nil {
+						klog.Errorf("Failed to send notification to session %s: %v", session.SessionID(), err)
+						// 通常这里会根据错误类型决定是否继续，但为演示目的，我们只是记录并继续
+					}
+				}
+			}
+
+			klog.Infof("Simulated stream finished for session %s.", session.SessionID())
+			return mcpgo.NewToolResultText(fmt.Sprintf("Simulated process finished after %d seconds.", duration)), nil
+		})
+
+		// 4. 初始化 StreamableHTTPServer
+		// 这是处理 HTTP 传输细节的关键组件，包括管理 SSE 流。
+		httpServer := server.NewStreamableHTTPServer(
+			mcpServer,
+			server.WithEndpointPath("/mcp"), // 设置 MCP 服务器的统一 HTTP 端点路径
+			server.WithHeartbeatInterval(3*time.Second), // 设置心跳间隔，保持 SSE 连接活跃
+		)
+
+		// 5. 将 StreamableHTTPServer 注册到 Go 的标准 HTTP 路由器
+		//http.Handle("/mcp", httpServer)
+		// 使用自定义处理程序包装MCP服务器的ServeHTTP方法
+		http.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+			crw := &customResponseWriter{ResponseWriter: w}
+			httpServer.ServeHTTP(crw, r)
+			// 可以根据crw.statusCode进行额外的逻辑处理
+			fmt.Printf("Request to %s, Path: %s, Original Status: %d, Sent Status: %d\n", r.Method, r.URL.Path, crw.statusCode, crw.statusCode)
+		})
+
+		// 6. 启动 HTTP 服务器
+		listenAddr := ":" + addr
+		klog.Infof("Starting MCP Streamable HTTP server on %s", listenAddr)
+		klog.Fatal(http.ListenAndServe(listenAddr, nil))
 	default:
-		klog.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'sse'", transport)
+		klog.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'streamable'", transport)
 	}
+}
+
+// customResponseWriter 包装 http.ResponseWriter 以拦截和修改状态码
+type customResponseWriter struct {
+	http.ResponseWriter
+	statusCode    int
+	headerWritten bool
+}
+
+func (crw *customResponseWriter) WriteHeader(statusCode int) {
+	if crw.headerWritten {
+		return // 防止重复写入头部
+	}
+	crw.statusCode = statusCode
+	// 如果mcp-go尝试写入202，则改为200
+	if statusCode == http.StatusAccepted {
+		crw.ResponseWriter.WriteHeader(http.StatusOK) // 写入200
+	} else {
+		crw.ResponseWriter.WriteHeader(statusCode)
+	}
+	crw.headerWritten = true
+}
+
+func (crw *customResponseWriter) Write(b []byte) (int, error) {
+	if !crw.headerWritten {
+		crw.WriteHeader(http.StatusOK) // 确保在写入内容前写入头部
+	}
+	return crw.ResponseWriter.Write(b)
 }
