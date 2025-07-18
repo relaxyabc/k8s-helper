@@ -115,3 +115,9 @@ Apache License 2.0
 - 选择对应的 server，即可在侧边栏直接调用 k8s-helper 的能力。
 
 > 注意：如需使用 http 模式，需保证 k8s-helper 服务已启动并监听 8080 端口。
+
+
+### 4. mcp-inspector 使用
+``` bash
+npx @modelcontextprotocol/inspector
+```

@@ -117,7 +117,9 @@ func main() {
 						"progress":  progress,
 						"timestamp": time.Now().Unix(),
 					}
-					err := mcpServer.SendNotificationToClient(ctx, "notifications/progress", msg)
+					// err := mcpServer.SendNotificationToClient(ctx, "notifications/progress", msg)
+					err := mcpServer.SendNotificationToClient(ctx, "window/progress", msg)
+					// err := mcpServer.SendNotificationToClient(ctx, "window/showMessage", msg)
 					if err != nil {
 						klog.Errorf("Failed to send notification to session %s: %v", session.SessionID(), err)
 						// 通常这里会根据错误类型决定是否继续，但为演示目的，我们只是记录并继续
@@ -141,10 +143,9 @@ func main() {
 		//http.Handle("/mcp", httpServer)
 		// 使用自定义处理程序包装MCP服务器的ServeHTTP方法
 		http.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-			crw := &customResponseWriter{ResponseWriter: w}
-			httpServer.ServeHTTP(crw, r)
+			httpServer.ServeHTTP(w, r)
 			// 可以根据crw.statusCode进行额外的逻辑处理
-			fmt.Printf("Request to %s, Path: %s, Original Status: %d, Sent Status: %d\n", r.Method, r.URL.Path, crw.statusCode, crw.statusCode)
+			fmt.Printf("Request to %s, Path: %s\n", r.Method, r.URL.Path)
 		})
 
 		// 6. 启动 HTTP 服务器
@@ -154,32 +155,4 @@ func main() {
 	default:
 		klog.Fatalf("Invalid transport type: %s. Must be 'stdio', 'http' or 'streamable'", transport)
 	}
-}
-
-// customResponseWriter 包装 http.ResponseWriter 以拦截和修改状态码
-type customResponseWriter struct {
-	http.ResponseWriter
-	statusCode    int
-	headerWritten bool
-}
-
-func (crw *customResponseWriter) WriteHeader(statusCode int) {
-	if crw.headerWritten {
-		return // 防止重复写入头部
-	}
-	crw.statusCode = statusCode
-	// 如果mcp-go尝试写入202，则改为200
-	if statusCode == http.StatusAccepted {
-		crw.ResponseWriter.WriteHeader(http.StatusOK) // 写入200
-	} else {
-		crw.ResponseWriter.WriteHeader(statusCode)
-	}
-	crw.headerWritten = true
-}
-
-func (crw *customResponseWriter) Write(b []byte) (int, error) {
-	if !crw.headerWritten {
-		crw.WriteHeader(http.StatusOK) // 确保在写入内容前写入头部
-	}
-	return crw.ResponseWriter.Write(b)
 }
